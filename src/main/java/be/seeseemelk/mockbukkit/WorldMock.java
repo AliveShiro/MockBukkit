@@ -53,7 +53,7 @@ import be.seeseemelk.mockbukkit.entity.PlayerMock;
 @SuppressWarnings("deprecation")
 public class WorldMock implements World
 {
-	private Map<Coordinate, Block> blocks = new HashMap<>();
+	private Map<Coordinate, BlockMock> blocks = new HashMap<>();
 	private Material defaultBlock;
 	private int height;
 	private int grassHeight;
@@ -106,27 +106,28 @@ public class WorldMock implements World
 	 * @param c Creates a block on the given coordinate.
 	 * @return A newly created block at that location.
 	 */
-	public Block createBlock(Coordinate c)
+	public BlockMock createBlock(Coordinate c)
 	{
 		if (c.y >= height)
 			throw new ArrayIndexOutOfBoundsException("Y larger than height");
 		else if (c.y < 0)
 			throw new ArrayIndexOutOfBoundsException("Y smaller than 0");
 		
-		Block block;
+		Location location = new Location(this, c.x, c.y, c.z);
+		BlockMock block;
 		if (c.y == 0)
-			block = new BlockMock(Material.BEDROCK);
+			block = new BlockMock(Material.BEDROCK, location);
 		else if (c.y <= grassHeight)
-			block = new BlockMock(defaultBlock);
+			block = new BlockMock(defaultBlock, location);
 		else
-			block = new BlockMock();
+			block = new BlockMock(location);
 		
 		blocks.put(c, block);
 		return block;
 	}
 	
 	@Override
-	public Block getBlockAt(int x, int y, int z)
+	public BlockMock getBlockAt(int x, int y, int z)
 	{
 		Coordinate coordinate = new Coordinate(x, y, z);
 		if (blocks.containsKey(coordinate))
@@ -140,7 +141,7 @@ public class WorldMock implements World
 	}
 
 	@Override
-	public Block getBlockAt(Location location)
+	public BlockMock getBlockAt(Location location)
 	{
 		return getBlockAt(location.getBlockX(), location.getBlockY(), location.getBlockZ());
 	}

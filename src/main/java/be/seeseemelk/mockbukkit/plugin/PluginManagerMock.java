@@ -3,14 +3,17 @@ package be.seeseemelk.mockbukkit.plugin;
 import static org.junit.Assert.fail;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -56,7 +59,7 @@ public class PluginManagerMock implements PluginManager
 	private final List<Plugin> plugins = new ArrayList<>();
 	private final JavaPluginLoader loader;
 	private final List<PluginCommand> commands = new ArrayList<>();
-	private final Map<Plugin, Listener> eventListeners = new HashMap<>();
+	private final Map<Plugin, List<ListenerEntry>> eventListeners = new HashMap<>();
 	private final List<Event> events = new ArrayList<>();
 	private final List<File> temporaryFiles = new LinkedList<>();
 	private final List<Class<?>> pluginConstructorTypes = Arrays.asList(JavaPluginLoader.class,
@@ -241,7 +244,12 @@ public class PluginManagerMock implements PluginManager
 				return (Constructor<? extends JavaPlugin>) constructor;
 			}
 		}
-		throw new NoSuchMethodException("No compatible constructor for " + class1.getName());
+		
+		StringBuilder parameters = new StringBuilder("[");
+		for (Class<?> type : types)
+			parameters.append(type.getName()).append(", ");
+		String str = parameters.substring(0, parameters.length() - 2) + "]";
+		throw new NoSuchMethodException("No compatible constructor for " + class1.getName() + " with parameters " + str);
 	}
 	
 	/**
@@ -344,85 +352,68 @@ public class PluginManagerMock implements PluginManager
 	{
 		try
 		{
-			return loadPlugin(class1, new PluginDescriptionFile(ClassLoader.getSystemResourceAsStream("plugin.yml")),
-					parameters);
+			PluginDescriptionFile description = findPluginDescription(class1);
+			return loadPlugin(class1, description, parameters);
 		}
-		catch (InvalidDescriptionException e)
+		catch (IOException | InvalidDescriptionException e)
 		{
 			throw new RuntimeException(e);
 		}
 	}
 	
 	/**
-	 * Checks if a method is an event handler and is compatible for a given event.
-	 * 
-	 * @param method
-	 *            The event handler method to test.
-	 * @param event
-	 *            The event the handler should be able to handle.
-	 * @return {@code true} if the handler is compatible with the event,
-	 *         {@code false} if it isn't.
+	 * Tries to find the correct plugin.yml for a given plugin.
+	 * It does this by opening each plugin.yml that it finds and
+	 * comparing the 'main' property to the qualified name of the
+	 * plugin class.
+	 * @param class1 The class that is in a subpackage of where to get the file.
+	 * @return The plugin description file.
+	 * @throws IOException Thrown when the file wan't be found or loaded.
+	 * @throws InvalidDescriptionException If the plugin description file is formatted incorrectly.
 	 */
-	private boolean isEventMethodCompatible(Method handler, Event event)
+	private PluginDescriptionFile findPluginDescription(Class<? extends JavaPlugin> class1) throws IOException, InvalidDescriptionException
 	{
-		return handler.isAnnotationPresent(EventHandler.class) && handler.getParameterCount() == 1
-				&& handler.getParameters()[0].getType().isInstance(event);
-	}
-	
-	/**
-	 * Tries to invoke an event handler on a certain listener. It will pass on any
-	 * exceptions the handler throws as runtime exception.
-	 * 
-	 * @param listener
-	 *            The listener that owns the handler.
-	 * @param handler
-	 *            The handler to call.
-	 * @param event
-	 *            The event to pass on to the handler.
-	 */
-	private void invokeEventMethod(Listener listener, Method handler, Event event) throws RuntimeException
-	{
-		try
+		Enumeration<URL> resources = class1.getClassLoader().getResources("plugin.yml");
+		while (resources.hasMoreElements())
 		{
-			handler.setAccessible(true);
-			handler.invoke(listener, event);
+			URL url = resources.nextElement();
+			PluginDescriptionFile description = new PluginDescriptionFile(url.openStream());
+			String mainClass = description.getMain();
+			if (class1.getName().equals(mainClass))
+				return description;
 		}
-		catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e)
-		{
-			throw new RuntimeException(e);
-		}
-	}
-	
-	/**
-	 * Executes a certain event on a certain event listener.
-	 * @param event The event to execute.
-	 * @param listener The listener on which to execute the event.
-	 */
-	protected void callEventOn(Event event, Listener listener)
-	{
-		for (Method method : listener.getClass().getMethods())
-		{
-			if (isEventMethodCompatible(method, event))
-			{
-				invokeEventMethod(listener, method, event);
-			}
-		}
+		throw new FileNotFoundException(String.format("Could not find file plugin.yml. Maybe forgot to add the 'main' property?"));
 	}
 	
 	@Override
 	public void callEvent(Event event) throws IllegalStateException
 	{
 		events.add(event);
-		for (Listener listener : eventListeners.values())
+		for (List<ListenerEntry> listeners : eventListeners.values())
 		{
-			callEventOn(event, listener);
+			for (ListenerEntry entry : listeners)
+			{
+				if (entry.isCompatibleFor(event))
+				{
+					entry.invokeUnsafe(event);
+				}
+			}
 		}
 	}
 	
 	@Override
 	public void registerEvents(Listener listener, Plugin plugin)
 	{
-		eventListeners.put(plugin, listener);
+		if (!eventListeners.containsKey(plugin))
+			eventListeners.put(plugin, new LinkedList<>());
+		
+		List<ListenerEntry> listeners = eventListeners.get(plugin);
+		for (Method method : listener.getClass().getMethods())
+		{
+			EventHandler annotation = method.getAnnotation(EventHandler.class);
+			if (annotation != null)
+				listeners.add(new ListenerEntry(plugin, listener, method));
+		}
 	}
 	
 	@Override

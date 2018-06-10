@@ -38,6 +38,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.entity.Villager;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockDamageEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
@@ -69,7 +70,6 @@ import be.seeseemelk.mockbukkit.inventory.PlayerInventoryMock;
 import be.seeseemelk.mockbukkit.inventory.PlayerInventoryViewMock;
 import be.seeseemelk.mockbukkit.inventory.SimpleInventoryViewMock;
 
-
 @SuppressWarnings("deprecation")
 public class PlayerMock extends EntityMock implements Player
 {
@@ -82,10 +82,11 @@ public class PlayerMock extends EntityMock implements Player
 	private boolean whitelisted = true;
 	private Map<Attribute, AttributeInstanceMock> attributes;
 	private InventoryView inventoryView;
-	
+
 	{
 		attributes = new EnumMap<>(Attribute.class);
-		attributes.put(Attribute.GENERIC_MAX_HEALTH, new AttributeInstanceMock(Attribute.GENERIC_MAX_HEALTH, MAX_HEALTH));
+		attributes.put(Attribute.GENERIC_MAX_HEALTH,
+				new AttributeInstanceMock(Attribute.GENERIC_MAX_HEALTH, MAX_HEALTH));
 	}
 
 	public PlayerMock(String name)
@@ -108,9 +109,10 @@ public class PlayerMock extends EntityMock implements Player
 		setLocation(Bukkit.getWorlds().get(0).getSpawnLocation().clone());
 		closeInventory();
 	}
-	
+
 	/**
 	 * Assert that the player is in a specific gamemode.
+	 * 
 	 * @param expectedGamemode The gamemode the player should be in.
 	 */
 	public void assertGameMode(GameMode expectedGamemode)
@@ -119,12 +121,70 @@ public class PlayerMock extends EntityMock implements Player
 	}
 	
 	/**
-	 * Simulates the player breaking a block.
+	 * Simulates the player damaging a block just like {@link simulateBlockDamage}.
+	 * However, if {@code InstaBreak} is enabled, it will not automatically fire
+	 * a {@link BlockBreakEvent}.
+	 * It will also still fire a {@link BlockDamageEvent} even if the player is not
+	 * in survival mode.
+	 * 
+	 * @param block The block to damage.
+	 * @return The event that has been fired.
+	 */
+	protected BlockDamageEvent simulateBlockDamagePure(Block block)
+	{
+		BlockDamageEvent event = new BlockDamageEvent(this, block, getItemInHand(), false);
+		Bukkit.getPluginManager().callEvent(event);
+		return event;
+	}
+
+	/**
+	 * Simulates the player damaging a block. Note that this method does not
+	 * anything unless the player is in survival mode.
+	 * If {@code InstaBreak} is set to true by an event handler, a 
+	 * {@link BlockBreakEvent} is immediately fired.
+	 * The result will then still be whether or not the {@link BlockDamageEvent} was cancelled
+	 * or not, not the later {@link BlockBreakEvent}.
+	 * 
+	 * @param block The block to damage.
+	 * @return {@code true} if the block was damaged, {@code false} if the event
+	 *         was cancelled or the player was not in survival gamemode.
+	 */
+	public boolean simulateBlockDamage(Block block)
+	{
+		if (gamemode == GameMode.SURVIVAL)
+		{
+			BlockDamageEvent event = simulateBlockDamagePure(block);
+			if (event.getInstaBreak())
+			{
+				BlockBreakEvent breakEvent = new BlockBreakEvent(block, this);
+				Bukkit.getPluginManager().callEvent(breakEvent);
+				if (!breakEvent.isCancelled())
+					block.setType(Material.AIR);
+			}
+			
+			return !event.isCancelled();
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	/**
+	 * Simulates the player breaking a block. This method will not break the
+	 * block if the player is in adventure or spectator mode.
+	 * If the player is in survival mode, the player will first damage the block.
+	 * 
 	 * @param block The block to break.
-	 * @return {@code true} if the block was broken, {@code false} if it wasn't.
+	 * @return {@code true} if the block was broken, {@code false} if it wasn't
+	 *         or if the player was in adventure mode or in spectator mode.
 	 */
 	public boolean simulateBlockBreak(Block block)
 	{
+		if ((gamemode == GameMode.SPECTATOR || gamemode == GameMode.ADVENTURE)
+				|| (gamemode == GameMode.SURVIVAL && simulateBlockDamagePure(block).isCancelled()))
+			return false;
+
 		BlockBreakEvent event = new BlockBreakEvent(block, this);
 		Bukkit.getPluginManager().callEvent(event);
 		if (!event.isCancelled())
@@ -141,7 +201,7 @@ public class PlayerMock extends EntityMock implements Player
 		}
 		return inventory;
 	}
-	
+
 	@Override
 	public GameMode getGameMode()
 	{
@@ -153,7 +213,7 @@ public class PlayerMock extends EntityMock implements Player
 	{
 		gamemode = mode;
 	}
-	
+
 	@Override
 	public double getHealth()
 	{
@@ -208,7 +268,7 @@ public class PlayerMock extends EntityMock implements Player
 		modifiers.put(DamageModifier.BASE, 1.0);
 		Map<DamageModifier, Function<Double, Double>> modifierFunctions = new EnumMap<>(DamageModifier.class);
 		modifierFunctions.put(DamageModifier.BASE, damage -> damage);
-		
+
 		EntityDamageEvent event = new EntityDamageEvent(this, DamageCause.CUSTOM, modifiers, modifierFunctions);
 		event.setDamage(amount);
 		Bukkit.getPluginManager().callEvent(event);
@@ -225,8 +285,9 @@ public class PlayerMock extends EntityMock implements Player
 		modifiers.put(DamageModifier.BASE, 1.0);
 		Map<DamageModifier, Function<Double, Double>> modifierFunctions = new EnumMap<>(DamageModifier.class);
 		modifierFunctions.put(DamageModifier.BASE, damage -> damage);
-		
-		EntityDamageByEntityEvent event = new EntityDamageByEntityEvent(source, this, DamageCause.ENTITY_ATTACK, modifiers, modifierFunctions);
+
+		EntityDamageByEntityEvent event = new EntityDamageByEntityEvent(source, this, DamageCause.ENTITY_ATTACK,
+				modifiers, modifierFunctions);
 		event.setDamage(amount);
 		Bukkit.getPluginManager().callEvent(event);
 		if (!event.isCancelled())
@@ -234,7 +295,7 @@ public class PlayerMock extends EntityMock implements Player
 			setHealth(health - amount);
 		}
 	}
-	
+
 	@Override
 	public boolean isWhitelisted()
 	{
@@ -256,7 +317,7 @@ public class PlayerMock extends EntityMock implements Player
 		}
 		return null;
 	}
-	
+
 	@Override
 	public boolean isOnline()
 	{
@@ -268,7 +329,7 @@ public class PlayerMock extends EntityMock implements Player
 	{
 		return MockBukkit.getMock().getBanList(BanList.Type.NAME).isBanned(getName());
 	}
-	
+
 	@Override
 	public AttributeInstance getAttribute(Attribute attribute)
 	{
@@ -281,32 +342,32 @@ public class PlayerMock extends EntityMock implements Player
 			throw new UnimplementedOperationException();
 		}
 	}
-	
+
 	@Override
 	public InventoryView getOpenInventory()
 	{
 		return inventoryView;
 	}
-	
+
 	@Override
 	public void openInventory(InventoryView inventory)
 	{
 		inventoryView = inventory;
 	}
-	
+
 	@Override
 	public InventoryView openInventory(Inventory inventory)
 	{
 		inventoryView = new PlayerInventoryViewMock(this, inventory);
 		return inventoryView;
 	}
-	
+
 	@Override
 	public void closeInventory()
 	{
-		inventoryView = new SimpleInventoryViewMock(this, null, inventory, InventoryType.CRAFTING); 
+		inventoryView = new SimpleInventoryViewMock(this, null, inventory, InventoryType.CRAFTING);
 	}
-	
+
 	@Override
 	public boolean performCommand(String command)
 	{
@@ -373,7 +434,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setItemInHand(ItemStack item)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -387,7 +448,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setItemOnCursor(ItemStack item)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -408,7 +469,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setCooldown(Material material, int ticks)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -457,7 +518,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setShoulderEntityLeft(Entity entity)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -471,7 +532,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setShoulderEntityRight(Entity entity)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -527,7 +588,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setRemainingAir(int ticks)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -541,7 +602,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setMaximumAir(int ticks)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -555,7 +616,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setMaximumNoDamageTicks(int ticks)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -569,7 +630,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setLastDamage(double damage)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -583,7 +644,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setNoDamageTicks(int ticks)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -632,7 +693,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void removePotionEffect(PotionEffectType type)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -660,7 +721,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setRemoveWhenFarAway(boolean remove)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -674,7 +735,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setCanPickupItems(boolean pickup)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -716,14 +777,14 @@ public class PlayerMock extends EntityMock implements Player
 	public void setGliding(boolean gliding)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setAI(boolean ai)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -737,7 +798,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setCollidable(boolean collidable)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -772,7 +833,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void acceptConversationInput(String input)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -786,14 +847,14 @@ public class PlayerMock extends EntityMock implements Player
 	public void abandonConversation(Conversation conversation)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void abandonConversation(Conversation conversation, ConversationAbandonedEvent details)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -828,7 +889,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void sendPluginMessage(Plugin source, String channel, byte[] message)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -849,7 +910,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setDisplayName(String name)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -863,14 +924,14 @@ public class PlayerMock extends EntityMock implements Player
 	public void setPlayerListName(String name)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setCompassTarget(Location loc)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -891,21 +952,21 @@ public class PlayerMock extends EntityMock implements Player
 	public void sendRawMessage(String message)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void kickPlayer(String message)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void chat(String msg)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -919,7 +980,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setSneaking(boolean sneak)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -933,28 +994,28 @@ public class PlayerMock extends EntityMock implements Player
 	public void setSprinting(boolean sprinting)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void saveData()
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void loadData()
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setSleepingIgnored(boolean isSleeping)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -968,91 +1029,91 @@ public class PlayerMock extends EntityMock implements Player
 	public void playNote(Location loc, byte instrument, byte note)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void playNote(Location loc, Instrument instrument, Note note)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void playSound(Location location, Sound sound, float volume, float pitch)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void playSound(Location location, String sound, float volume, float pitch)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void playSound(Location location, Sound sound, SoundCategory category, float volume, float pitch)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void playSound(Location location, String sound, SoundCategory category, float volume, float pitch)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void stopSound(Sound sound)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void stopSound(String sound)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void stopSound(Sound sound, SoundCategory category)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void stopSound(String sound, SoundCategory category)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void playEffect(Location loc, Effect effect, int data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public <T> void playEffect(Location loc, Effect effect, T data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void sendBlockChange(Location loc, Material material, byte data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1066,42 +1127,42 @@ public class PlayerMock extends EntityMock implements Player
 	public void sendBlockChange(Location loc, int material, byte data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void sendSignChange(Location loc, String[] lines) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void sendMap(MapView map)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void updateInventory()
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void awardAchievement(Achievement achievement)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void removeAchievement(Achievement achievement)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1115,35 +1176,35 @@ public class PlayerMock extends EntityMock implements Player
 	public void incrementStatistic(Statistic statistic) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void decrementStatistic(Statistic statistic) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void incrementStatistic(Statistic statistic, int amount) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void decrementStatistic(Statistic statistic, int amount) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setStatistic(Statistic statistic, int newValue) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1157,14 +1218,14 @@ public class PlayerMock extends EntityMock implements Player
 	public void incrementStatistic(Statistic statistic, Material material) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void decrementStatistic(Statistic statistic, Material material) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1178,35 +1239,35 @@ public class PlayerMock extends EntityMock implements Player
 	public void incrementStatistic(Statistic statistic, Material material, int amount) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void decrementStatistic(Statistic statistic, Material material, int amount) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setStatistic(Statistic statistic, Material material, int newValue) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void incrementStatistic(Statistic statistic, EntityType entityType) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void decrementStatistic(Statistic statistic, EntityType entityType) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1221,28 +1282,28 @@ public class PlayerMock extends EntityMock implements Player
 			throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void decrementStatistic(Statistic statistic, EntityType entityType, int amount)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setStatistic(Statistic statistic, EntityType entityType, int newValue)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setPlayerTime(long time, boolean relative)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1270,14 +1331,14 @@ public class PlayerMock extends EntityMock implements Player
 	public void resetPlayerTime()
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setPlayerWeather(WeatherType type)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1291,21 +1352,21 @@ public class PlayerMock extends EntityMock implements Player
 	public void resetPlayerWeather()
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void giveExp(int amount)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void giveExpLevels(int amount)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1319,7 +1380,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setExp(float exp)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1333,7 +1394,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setLevel(int level)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1347,7 +1408,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setTotalExperience(int exp)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1361,7 +1422,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setExhaustion(float value)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1375,7 +1436,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setSaturation(float value)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1389,7 +1450,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setFoodLevel(int value)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1403,14 +1464,14 @@ public class PlayerMock extends EntityMock implements Player
 	public void setBedSpawnLocation(Location location)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setBedSpawnLocation(Location location, boolean force)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1424,35 +1485,35 @@ public class PlayerMock extends EntityMock implements Player
 	public void setAllowFlight(boolean flight)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void hidePlayer(Player player)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void hidePlayer(Plugin plugin, Player player)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void showPlayer(Player player)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void showPlayer(Plugin plugin, Player player)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1473,21 +1534,21 @@ public class PlayerMock extends EntityMock implements Player
 	public void setFlying(boolean value)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setFlySpeed(float value) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setWalkSpeed(float value) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1508,21 +1569,21 @@ public class PlayerMock extends EntityMock implements Player
 	public void setTexturePack(String url)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setResourcePack(String url)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setResourcePack(String url, byte[] hash)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1536,7 +1597,7 @@ public class PlayerMock extends EntityMock implements Player
 	public void setScoreboard(Scoreboard scoreboard) throws IllegalArgumentException, IllegalStateException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1550,14 +1611,14 @@ public class PlayerMock extends EntityMock implements Player
 	public void setHealthScaled(boolean scale)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void setHealthScale(double scale) throws IllegalArgumentException
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1578,56 +1639,56 @@ public class PlayerMock extends EntityMock implements Player
 	public void setSpectatorTarget(Entity entity)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void sendTitle(String title, String subtitle)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void sendTitle(String title, String subtitle, int fadeIn, int stay, int fadeOut)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void resetTitle()
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void spawnParticle(Particle particle, Location location, int count)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public void spawnParticle(Particle particle, double x, double y, double z, int count)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public <T> void spawnParticle(Particle particle, Location location, int count, T data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
 	public <T> void spawnParticle(Particle particle, double x, double y, double z, int count, T data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1635,7 +1696,7 @@ public class PlayerMock extends EntityMock implements Player
 			double offsetZ)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1643,7 +1704,7 @@ public class PlayerMock extends EntityMock implements Player
 			double offsetY, double offsetZ)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1651,7 +1712,7 @@ public class PlayerMock extends EntityMock implements Player
 			double offsetZ, T data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1659,7 +1720,7 @@ public class PlayerMock extends EntityMock implements Player
 			double offsetY, double offsetZ, T data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1667,7 +1728,7 @@ public class PlayerMock extends EntityMock implements Player
 			double offsetZ, double extra)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1675,7 +1736,7 @@ public class PlayerMock extends EntityMock implements Player
 			double offsetY, double offsetZ, double extra)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1683,7 +1744,7 @@ public class PlayerMock extends EntityMock implements Player
 			double offsetZ, double extra, T data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
@@ -1691,7 +1752,7 @@ public class PlayerMock extends EntityMock implements Player
 			double offsetY, double offsetZ, double extra, T data)
 	{
 		// TODO Auto-generated method stub
-		
+
 	}
 
 	@Override
